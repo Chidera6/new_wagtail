@@ -14,13 +14,12 @@ from wagtail.admin import messages
 from wagtail.admin.auth import any_permission_required, permission_required
 from wagtail.admin.forms.search import SearchForm
 from wagtail.admin.modal_workflow import render_modal_workflow
-from wagtail.admin.views.generic import IndexView
+from wagtail.admin.views.generic import IndexView, DeleteView
 from wagtail.contrib.search_promotions import forms, models
 from wagtail.contrib.search_promotions.models import Query,SearchPromotion
 from wagtail.log_actions import log
 from wagtail.search.utils import normalise_query_string
 
-decorators = [vary_on_headers, any_permission_required,permission_required]
 
 class Index(IndexView, ListView):
     model = Query
@@ -259,8 +258,18 @@ def delete(request, query_id):
             "query": query,
         },
     )
+class Delete(DeleteView):
+    model = Query
+    template_name = 'wagtailsearchpromotions/confirm_delete.html'
+    success_message = "Editor's picks deleted."
+    permission_required = "wagtailsearchpromotions.delete_searchpromotion"
+    index_url_name = 'wagtailsearchpromotions:index'
+    delete_url_name = 'wagtailsearchpromotions:delete'
+    edit_url_name = 'wagtailsearchpromotions:edit'
+    pk_url_kwarg = 'query_id'
+  
 
-
+    
 def chooser(request, get_results=False):
     # Get most popular queries
     queries = models.Query.get_most_popular()
