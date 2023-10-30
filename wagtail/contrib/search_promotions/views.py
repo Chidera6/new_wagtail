@@ -8,98 +8,72 @@ from django.urls import reverse
 from django.utils.decorators import method_decorator
 from django.utils.translation import gettext as _
 from django.views.decorators.vary import vary_on_headers
+from django.views.generic import ListView
 
 from wagtail.admin import messages
 from wagtail.admin.auth import any_permission_required, permission_required
 from wagtail.admin.forms.search import SearchForm
 from wagtail.admin.modal_workflow import render_modal_workflow
-from wagtail.admin.views.generic import IndexView as WagtailIndexView
+from wagtail.admin.views.generic import IndexView
 from wagtail.contrib.search_promotions import forms, models
-from wagtail.contrib.search_promotions.models import Query
+from wagtail.contrib.search_promotions.models import Query,SearchPromotion
 from wagtail.log_actions import log
 from wagtail.search.utils import normalise_query_string
 
-decorators = [vary_on_headers, any_permission_required]
+decorators = [vary_on_headers, any_permission_required,permission_required]
 
-
-@method_decorator(
-    any_permission_required(
+class Index(IndexView, ListView):
+    model = Query
+    template_name = "wagtailsearchpromotions/index.html"
+    results_template_name = "wagtailsearchpromotions/results.html"
+    default_ordering = "query_string"
+    any_permission_required = [
         "wagtailsearchpromotions.add_searchpromotion",
         "wagtailsearchpromotions.change_searchpromotion",
         "wagtailsearchpromotions.delete_searchpromotion",
-    ),
-    name="dispatch",
-)
-@method_decorator(vary_on_headers("X-Requested-With"), name="dispatch")
-class IndexView(WagtailIndexView):
-    template_name = "wagtailsearchpromotions/index.html"
-    result_template_name = "wagtailsearchpromotions/results.html"
+    ]
     paginate_by = 20
-    is_searching = False
-    ordering = "query_string"
+    search_kwarg = "q"
+    is_searchable = True
+    
+    @method_decorator(vary_on_headers("X-Requested-With"))
+    def dispatch(self, request):
+        return super().dispatch(request)
+    
+    def get_valid_orderings(self):
+        return ["query_string", "-query_string", "views", "-views"]
 
-    def get_ordering(self):
-        # Ordering
-        valid_ordering = ["query_string", "-query_string", "views", "-views"]
-        ordering = self.ordering
-
-        if (
-            "ordering" in self.request.GET
-            and self.request.GET["ordering"] in valid_ordering
-        ):
-            ordering = self.request.GET["ordering"]
-        return ordering
-
-    def get(self, request):
-        # Query
-        queries = Query.objects.filter(editors_picks__isnull=False).distinct()
+    def get_queryset(self):
+        queryset = self.model.objects.filter(editors_picks__isnull=False).distinct()
         ordering = self.get_ordering()
+
         if "views" in ordering:
-            queries = queries.annotate(
-                views=functions.Coalesce(Sum("daily_hits__hits"), 0)
-            )
-        queries = queries.order_by(ordering)
+            queryset = queryset.annotate(
+                views=Sum("daily_hits__hits", distinct=True)
+            ).distinct()   
 
-        # Search
-        query_string = self.request.GET.get("q", "")
+        query_string = self.request.GET.get(self.search_kwarg, "")
         if query_string:
-            queries = queries.filter(query_string__icontains=query_string)
-            self.is_searching = True
+            queryset = queryset.filter(query_string__icontains=query_string)
 
-        # Paginate
-        paginator = Paginator(queries, per_page=self.paginate_by)
-        page_number = self.request.GET.get("p", 1)
-        try:
-            queries = paginator.page(page_number)
-        except InvalidPage:
-            raise Http404
+        return queryset.order_by(ordering)
 
-        if request.headers.get("x-requested-with") == "XMLHttpRequest":
-            return render(
-                request,
-                self.result_template_name,
-                {
-                    "is_searching": self.is_searching,
-                    "ordering": self.get_ordering(),
-                    "queries": queries,
-                    "query_string": query_string,
-                },
-            )
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        
+        context["queries"] = self.get_queryset()
+        context["ordering"] = self.get_ordering()
+        if self.request.headers.get("x-requested-with") == "XMLHttpRequest":
+            self.template_name = self.results_template_name
         else:
-            return render(
-                request,
-                self.template_name,
-                {
-                    "is_searching": self.is_searching,
-                    "ordering": self.get_ordering(),
-                    "queries": queries,
-                    "query_string": query_string,
-                    "search_form": SearchForm(
-                        data={"q": query_string} if query_string else None,
-                        placeholder=_("Search promoted results"),
-                    ),
-                },
-            )
+            context["search_form"] = SearchForm(
+            data={"q": self.search_query} if self.search_query else None,
+            placeholder=_("Search promoted results"),
+        )
+            self.template_name = self.template_name
+    
+        return context
+
 
 
 def save_searchpicks(query, new_query, searchpicks_formset):
@@ -147,16 +121,21 @@ def save_searchpicks(query, new_query, searchpicks_formset):
 @permission_required("wagtailsearchpromotions.add_searchpromotion")
 def add(request):
     if request.method == "POST":
+        #checks if its  a post request
         # Get query
         query_form = forms.QueryForm(request.POST)
+        #gets the form
         if query_form.is_valid():
+            #check if the form is valid
             query = Query.get(query_form["query_string"].value())
+            #make  a query
 
             # Save search picks
             searchpicks_formset = forms.SearchPromotionsFormSet(
                 request.POST, instance=query
             )
             if save_searchpicks(query, query, searchpicks_formset):
+                #call the save search picks function
                 for search_pick in searchpicks_formset.new_objects:
                     log(search_pick, "wagtail.create")
                 messages.success(
@@ -200,7 +179,6 @@ def add(request):
             "form_media": query_form.media + searchpicks_formset.media,
         },
     )
-
 
 @permission_required("wagtailsearchpromotions.change_searchpromotion")
 def edit(request, query_id):
