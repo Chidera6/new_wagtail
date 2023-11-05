@@ -8,7 +8,7 @@ from django.urls import reverse
 from django.utils.decorators import method_decorator
 from django.utils.translation import gettext as _
 from django.views.decorators.vary import vary_on_headers
-from django.views.generic import ListView
+
 
 from wagtail.admin import messages
 from wagtail.admin.auth import any_permission_required, permission_required
@@ -21,7 +21,7 @@ from wagtail.log_actions import log
 from wagtail.search.utils import normalise_query_string
 
 
-class Index(IndexView, ListView):
+class Index(IndexView):
     model = Query
     template_name = "wagtailsearchpromotions/index.html"
     results_template_name = "wagtailsearchpromotions/results.html"
@@ -41,7 +41,7 @@ class Index(IndexView, ListView):
     
     def get_valid_orderings(self):
         return ["query_string", "-query_string", "views", "-views"]
-
+    
     def get_queryset(self):
         queryset = self.model.objects.filter(editors_picks__isnull=False).distinct()
         ordering = self.get_ordering()
@@ -258,16 +258,6 @@ def delete(request, query_id):
             "query": query,
         },
     )
-class Delete(DeleteView):
-    model = Query
-    template_name = 'wagtailsearchpromotions/confirm_delete.html'
-    success_message = "Editor's picks deleted."
-    permission_required = "wagtailsearchpromotions.delete_searchpromotion"
-    index_url_name = 'wagtailsearchpromotions:index'
-    delete_url_name = 'wagtailsearchpromotions:delete'
-    edit_url_name = 'wagtailsearchpromotions:edit'
-    pk_url_kwarg = 'query_id'
-  
 
     
 def chooser(request, get_results=False):
